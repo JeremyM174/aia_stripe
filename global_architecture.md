@@ -1,4 +1,4 @@
-![global architecture schema](global_architecture.md)
+![global architecture schema](global_architecture.png)
 
 Welcome to my take on Jedha's data architecture project, based on Stripe! The objective is to build a transactional data infrastructure. Let's dive right in then!
 
