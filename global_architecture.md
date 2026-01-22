@@ -1,0 +1,37 @@
+![global architecture schema](global_architecture.md)
+
+Welcome to my take on Jedha's data architecture project, based on Stripe! The objective is to build a transactional data infrastructure. Let's dive right in then!
+
+Let's first introduce our technical stack: we will use Apache's Airflow as our orchestrator for the entire infrastructure. Streamlit will allow us to make a fraud detection application, providing a "predict" endpoint through which the transaction data could be run & analyzed; the model behind it would be extracted from our best experiment in MLflow, for which the CI/CD would be enabled thanks to Jenkins while Evidently AI would monitor the data drift.
+
+Going down the data flow, we would run our OLTP on a PostgreSQL server, paired for our noSQL elements with MongoDB. The connections when transferring data batches would be handled by Airbyte, whereas realtime data streaming would instead be ensured through Apache's Kafka; finally our OLAP receiving all this data would be run on Amazon's Redshift as the data warehouse! This will enable our analytical teams to run their queries through the tool of their choice, such as Tableau or PowerBI.
+
+Now to understand the flow in the architecture, let's develop the concept by following the schema's ten points:
+
+1. First of all and as stated by our instructions, we have shared data accross all systems. Those are merchant data, product catalogs, countries & regions, and finally currencies & their exchange rates. Hence the duplication over several systems in our architecture; although nearly all of this data is expected to remain in a near static state, one element that would require more frequent updates thanks to our orchestrator would be the exchange rates for currencies - an expected requirement in our instructions.
+
+2. Then our data begins flowing into our system; although this point will be lengthy, recaps will be provided below by focusing on certain components of our system.
+
+A new transaction is generated with Stripe. The signal is thus sent in different states thanks to our pipelines into three components of our architecture: the core transactional elements fitting our OLTP are directly ingested into this Postgres for operational needs, in order to ensure minimal latency in processing the transaction and transferring funds.
+
+However, we still want to have it analyzed for fraud; thus the same elements fitting our OLTP are also sent to our fraud detection app, which in turn will feed the OLTP by editing its matching line (identified by the same transaction ID) with the anomaly score derived from the analysis, providing at the same time the model's version (as a way to identify said model) and a boolean value to easily flag suspicious transactions worth human attention in the shortest delay. Fraud detection is decoupled from OLTP ingestion as a possible latency bottleneck: while our OLTP is optimised for writing, our app may meet various issues slowing it down which could have real-time repercussions such as a customer physically held at length with a payment awaiting validation.
+
+On the third (and last) side of this flow, the largest elements such as logs that couldn't be reasonably handled by our OLTP are sent on their own to our noSQL server, here MongoDB; it would also be fed by the fraud detection app by recovering the model's features for later exploration by our teams if needed.
+
+3. As most has been said above, let's recap by focusing on what the OLTP receives: it is first fed by the initial transaction emitted through Stripe to ensure operational processing. What it will miss is the fraud analysis, which will queue its prediction depending the app's state (as it may be in the process of upscaling its resources against increasing demand, having its model updated or just undergoing routine maintenance) and will provide ASAP the remaining missing data pertaining to fraud, thus completing our OLTP rows' data.
+
+4. Now for the noSQL part, whenever a transaction is produced, several logs are collected around it; those end the way of our MongoDB as a document-oriented database for retrieval amongst one of four collections (which will be described in another document). Product reviews and surveys, too complex for our OLTP would also be ingested by our noSQL database; the fraud detection app also feeds this database by recovering whichever features were used for its analysis, should our teams want to zoom in on how it performs.
+
+5. With both systems (OLTP & noSQL) fed, it's time to prepare pushing their data to our OLAP! While Kafka would enable real-time data streaming into our OLAP, it would take some Airflow orchestration to sollicitate Airbyte in establishing connections downhill towards our OLAP. In this example it could simply be daily batches forwarding whichever data is awaiting OLAP ingestion; one condition though would be to complete our fraud analysis step and writing to avoid missing data and thus oversight, which could be another performance bottleneck should the upstream detection app encounter issues or lack resources to match the transactions' flow.
+
+6. With the data finally flowing into our data warehouse, we will rely on Amazon's Redshift to perform data analysis! Depending on the upstream pipelines, this OLAP will divide the variety of informations into a fact table and multiple dimension tables, with several aggregation tables revolving around to meet our instructions' requirements.
+
+7. Of course, this doesn't mean they should remain limited to the list; the needs of our data analysis team can be many, so lend them an ear! Whichever their tool of choice, our OLAP source is now at their disposal to perform their explorations.
+
+8. However, whichever model and whatever performance it provides, data constantly evolves and makes said model obsolete. Thus the need to establish a loop to keep it in line with daily operations and fraud detection; part of the data ingested by the OLAP could be observed & marked by partnering users to flag which transactions really are fraudulous or not, thus providing data scientists with content to experiment with and store the results in MLflow. Automating the process can also be performed with the help of Jenkins, while Evidently AI would monitor in particular the data drift.
+
+9. To finish the continuous deployment part of the CI/CD managed by Jenkins, whenever a new MLflow experiment would be detected by Airflow as performing better than the current fraud detection model, our orchestrator would trigger Jenkins to run its CD routine in order to run this new model in our updated detection app.
+
+10. Finally, depending on business decisions, Airflow could automate the generation of a backup of our system to address the disaster recovery plan of choice. For regulations compliance, Airflow could also automate the encryption of personal data at various stages of the data flow, while the global monitoring may require the use of external tools such as OneTrust. This leaves the topic of security which could also require external tools like Vormetric to be used.
+
+That's it for a view from above of our global architecture; more documents await to explain in deeper detail how do the OLTP, noSQL & OLAP components work!
